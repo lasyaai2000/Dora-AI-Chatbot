@@ -1,4 +1,3 @@
-
 import json
 import os
 import time
@@ -9,6 +8,7 @@ import streamlit.components.v1 as components
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+
 
 # ==========================================
 # CONFIGURATION
@@ -25,59 +25,6 @@ st.set_page_config(
 
 MODEL = "gemini-3.5-flash-lite"
 FALLBACK_MODEL = "gemini-3.8-flash"
-HISTORY_FILE = "chat_history.json"
-
-
-def load_chat_history():
-    """Load saved conversations from the local JSON file."""
-    try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as file:
-            data = json.load(file)
-
-        if not isinstance(data, dict):
-            return {}, None
-
-        chats = data.get("chats", {})
-        active_chat = data.get("active_chat")
-
-        if not isinstance(chats, dict):
-            chats = {}
-
-        valid_chats = {}
-
-        for chat_id, chat_messages in chats.items():
-            if isinstance(chat_id, str) and isinstance(chat_messages, list):
-                valid_messages = [
-                    message for message in chat_messages
-                    if isinstance(message, dict)
-                    and message.get("role") in ("user", "assistant")
-                    and isinstance(message.get("content"), str)
-                ]
-
-                valid_chats[chat_id] = valid_messages
-
-        return valid_chats, active_chat
-
-    except FileNotFoundError:
-        return {}, None
-
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-        return {}, None
-
-
-def save_chat_history(chats, active_chat):
-    """Save all conversations to the local JSON file."""
-    data = {
-        "chats": chats,
-        "active_chat": active_chat
-    }
-
-    temporary_file = HISTORY_FILE + ".tmp"
-
-    with open(temporary_file, "w", encoding="utf-8") as file:
-        json.dump(data, file, ensure_ascii=False, indent=2)
-
-    os.replace(temporary_file, HISTORY_FILE)
 
 
 SYSTEM_PROMPT = """
@@ -102,10 +49,37 @@ Never pretend to know something you do not know.
 
 
 # ==========================================
+# GEMINI API CONNECTION
+# ==========================================
+
+api_key = os.getenv("GEMINI_API_KEY")
+
+try:
+    if not api_key:
+        api_key = st.secrets.get("GEMINI_API_KEY")
+
+except Exception:
+    pass
+
+client = None
+
+if api_key:
+    try:
+        client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(timeout=45000)
+        )
+
+    except Exception as error:
+        st.error(f"Gemini connection error: {error}")
+
+
+# ==========================================
 # COPY RESPONSE FUNCTION
 # ==========================================
 
 def render_copy_button(text):
+
     safe_text = json.dumps(
         text,
         ensure_ascii=False
@@ -114,6 +88,7 @@ def render_copy_button(text):
     html = f"""
     <html>
     <body style="margin:0;background:transparent;">
+
         <button id="copyBtn" style="
             background:#142744;
             color:#67E8F9;
@@ -138,6 +113,7 @@ def render_copy_button(text):
                         area.value = textToCopy;
                         area.style.position = "fixed";
                         area.style.left = "-9999px";
+
                         document.body.appendChild(area);
                         area.select();
 
@@ -147,12 +123,14 @@ def render_copy_button(text):
                         button.innerText = copied
                             ? "✓ Copied!"
                             : "Copy failed";
+
                     }} catch (fallbackError) {{
                         button.innerText = "Copy failed";
                     }}
                 }}
             }});
         </script>
+
     </body>
     </html>
     """
@@ -162,24 +140,6 @@ def render_copy_button(text):
         height=42,
         scrolling=False
     )
-
-
-# ==========================================
-# GEMINI CONNECTION
-# ==========================================
-
-api_key = os.getenv("GEMINI_API_KEY")
-client = None
-
-if api_key:
-    try:
-        client = genai.Client(
-            api_key=api_key,
-            http_options=types.HttpOptions(timeout=45000)
-        )
-
-    except Exception as error:
-        st.error(f"Gemini connection error: {error}")
 
 
 # ==========================================
@@ -273,7 +233,7 @@ st.markdown("""
     margin-bottom: 18px !important;
 }
 
-/* FORCE ALL CHAT TEXT TO BE VISIBLE */
+/* CHAT TEXT */
 
 [data-testid="stChatMessage"] *,
 [data-testid="stChatMessage"] p,
@@ -299,7 +259,7 @@ st.markdown("""
     -webkit-text-fill-color: #67E8F9 !important;
 }
 
-/* CHAT CODE BLOCKS */
+/* CHAT CODE */
 
 [data-testid="stChatMessage"] pre {
     background: #080F1C !important;
@@ -314,7 +274,7 @@ st.markdown("""
     background: #172338 !important;
 }
 
-/* MESSAGE DORA INPUT BUBBLE */
+/* CHAT INPUT */
 
 [data-testid="stChatInput"] {
     background: #111D33 !important;
@@ -324,15 +284,13 @@ st.markdown("""
     box-shadow: 0 0 22px rgba(59, 130, 246, 0.16) !important;
 }
 
-/* INPUT INTERNAL BACKGROUND */
-
 [data-testid="stChatInput"] > div,
 [data-testid="stChatInput"] div,
 [data-testid="stChatInput"] textarea {
     background-color: #111D33 !important;
 }
 
-/* TYPED MESSAGE TEXT */
+/* TYPED TEXT */
 
 [data-testid="stChatInput"] textarea,
 [data-testid="stChatInput"] textarea:focus {
@@ -344,7 +302,7 @@ st.markdown("""
     opacity: 1 !important;
 }
 
-/* INPUT PLACEHOLDER */
+/* PLACEHOLDER */
 
 [data-testid="stChatInput"] textarea::placeholder {
     color: #B8C5D8 !important;
@@ -366,7 +324,7 @@ st.markdown("""
     fill: #FFFFFF !important;
 }
 
-/* CHAT INPUT BOTTOM AREA */
+/* BOTTOM AREA */
 
 [data-testid="stBottom"],
 [data-testid="stBottomBlockContainer"] {
@@ -423,32 +381,45 @@ hr {
 
 
 # ==========================================
-# SESSION STATE AND SAVED CHAT HISTORY
+# PRIVATE SESSION CHAT STORAGE
 # ==========================================
 
+# IMPORTANT:
+# Each visitor gets their own Streamlit session.
+# Conversations are stored ONLY in that session.
+# No shared JSON file or global chat history.
+
 if "chats" not in st.session_state:
-    saved_chats, saved_active_chat = load_chat_history()
 
-    st.session_state.chats = saved_chats
-    st.session_state.active_chat = saved_active_chat
-
-if not st.session_state.chats:
     chat_id = str(uuid.uuid4())
+
+    st.session_state.chats = {
+        chat_id: []
+    }
+
+    st.session_state.active_chat = chat_id
+
+
+if "active_chat" not in st.session_state:
+    st.session_state.active_chat = next(
+        iter(st.session_state.chats)
+    )
+
+
+if (
+    st.session_state.active_chat
+    not in st.session_state.chats
+):
+
+    chat_id = str(uuid.uuid4())
+
     st.session_state.chats[chat_id] = []
     st.session_state.active_chat = chat_id
 
-if (
-    not st.session_state.active_chat
-    or st.session_state.active_chat not in st.session_state.chats
-):
-    st.session_state.active_chat = next(iter(st.session_state.chats))
 
-messages = st.session_state.chats[st.session_state.active_chat]
-
-save_chat_history(
-    st.session_state.chats,
+messages = st.session_state.chats[
     st.session_state.active_chat
-)
+]
 
 
 # ==========================================
@@ -468,18 +439,21 @@ with st.sidebar:
 
     st.markdown("---")
 
-    if st.button("＋  New conversation", use_container_width=True):
+    # NEW CONVERSATION
+
+    if st.button(
+        "＋  New conversation",
+        use_container_width=True
+    ):
 
         chat_id = str(uuid.uuid4())
+
         st.session_state.chats[chat_id] = []
         st.session_state.active_chat = chat_id
 
-        save_chat_history(
-            st.session_state.chats,
-            st.session_state.active_chat
-        )
-
         st.rerun()
+
+    # CONVERSATION HISTORY
 
     st.markdown("### Your conversations")
 
@@ -488,8 +462,11 @@ with st.sidebar:
     ):
 
         if chat_messages:
+
             title = chat_messages[0]["content"][:25]
+
         else:
+
             title = "New conversation"
 
         if st.button(
@@ -497,26 +474,29 @@ with st.sidebar:
             key=chat_id,
             use_container_width=True
         ):
-            st.session_state.active_chat = chat_id
 
-            save_chat_history(
-                st.session_state.chats,
-                st.session_state.active_chat
-            )
+            st.session_state.active_chat = chat_id
 
             st.rerun()
 
     st.markdown("---")
 
+    # GEMINI STATUS
+
     if client:
+
         st.markdown(
-            '<div class="status-box">● Gemini connection initialized'
+            '<div class="status-box">'
+            '● Gemini connection initialized'
             '</div>',
             unsafe_allow_html=True
         )
+
     else:
+
         st.markdown(
-            '<div class="status-box">● API key not detected'
+            '<div class="status-box">'
+            '● API key not detected'
             '</div>',
             unsafe_allow_html=True
         )
@@ -526,14 +506,16 @@ with st.sidebar:
     st.caption("DORA AI")
     st.caption("Think. Explore. Create.")
 
-    if st.button("Clear current conversation", use_container_width=True):
+    # CLEAR CURRENT CONVERSATION
 
-        st.session_state.chats[st.session_state.active_chat] = []
+    if st.button(
+        "Clear current conversation",
+        use_container_width=True
+    ):
 
-        save_chat_history(
-            st.session_state.chats,
+        st.session_state.chats[
             st.session_state.active_chat
-        )
+        ] = []
 
         st.rerun()
 
@@ -563,48 +545,60 @@ st.markdown(
 if not messages:
 
     st.markdown(
-        '<div class="section-title">TRY ASKING DORA</div>',
+        '<div class="section-title">'
+        'TRY ASKING DORA'
+        '</div>',
         unsafe_allow_html=True
     )
 
     col1, col2 = st.columns(2)
 
     with col1:
+
         if st.button(
             "Explain artificial intelligence simply",
             use_container_width=True
         ):
+
             st.session_state.pending_prompt = (
                 "Explain artificial intelligence simply"
             )
+
             st.rerun()
 
         if st.button(
             "Give me a creative business idea",
             use_container_width=True
         ):
+
             st.session_state.pending_prompt = (
                 "Give me a creative business idea"
             )
+
             st.rerun()
 
     with col2:
+
         if st.button(
             "Write a Python program to reverse a string",
             use_container_width=True
         ):
+
             st.session_state.pending_prompt = (
                 "Write a Python program to reverse a string"
             )
+
             st.rerun()
 
         if st.button(
             "Help me prepare for a technical interview",
             use_container_width=True
         ):
+
             st.session_state.pending_prompt = (
                 "Help me prepare for a technical interview"
             )
+
             st.rerun()
 
 
@@ -615,11 +609,15 @@ if not messages:
 for message in messages:
 
     with st.chat_message(
-        "assistant" if message["role"] == "assistant" else "user"
+        "assistant"
+        if message["role"] == "assistant"
+        else "user"
     ):
+
         st.markdown(message["content"])
 
         if message["role"] == "assistant":
+
             render_copy_button(message["content"])
 
 
@@ -629,7 +627,11 @@ for message in messages:
 
 def ask_dora(conversation):
 
-    models_to_try = [MODEL, FALLBACK_MODEL]
+    models_to_try = [
+        MODEL,
+        FALLBACK_MODEL
+    ]
+
     last_error = None
 
     for selected_model in models_to_try:
@@ -637,6 +639,7 @@ def ask_dora(conversation):
         for attempt in range(2):
 
             try:
+
                 response = client.models.generate_content(
                     model=selected_model,
                     contents=conversation,
@@ -650,9 +653,12 @@ def ask_dora(conversation):
                 answer = response.text
 
                 if answer and answer.strip():
+
                     return answer
 
-                raise ValueError("The model returned an empty response.")
+                raise ValueError(
+                    "The model returned an empty response."
+                )
 
             except Exception as error:
 
@@ -670,13 +676,16 @@ def ask_dora(conversation):
                 )
 
                 if retryable and attempt == 0:
+
                     time.sleep(2)
+
                     continue
 
                 break
 
     raise RuntimeError(
-        f"Both Gemini model attempts failed. Last error: {last_error}"
+        f"Both Gemini model attempts failed. "
+        f"Last error: {last_error}"
     )
 
 
@@ -687,22 +696,26 @@ def ask_dora(conversation):
 prompt = st.chat_input("Message Dora...")
 
 if "pending_prompt" in st.session_state:
+
     prompt = st.session_state.pop("pending_prompt")
 
+
 if prompt:
+
+    response_text = ""
+
+    # SAVE USER MESSAGE IN THIS SESSION ONLY
 
     messages.append({
         "role": "user",
         "content": prompt
     })
 
-    save_chat_history(
-        st.session_state.chats,
-        st.session_state.active_chat
-    )
-
     with st.chat_message("user"):
+
         st.markdown(prompt)
+
+    # DORA RESPONSE
 
     with st.chat_message("assistant"):
 
@@ -710,7 +723,8 @@ if prompt:
 
             response_text = (
                 "Dora cannot connect because the API key "
-                "was not detected. Please check your .env file."
+                "was not detected. Please check your "
+                "Streamlit Secrets or local .env file."
             )
 
             st.error(response_text)
@@ -722,16 +736,22 @@ if prompt:
                 conversation = []
 
                 for message in messages:
+
                     conversation.append({
                         "role": (
-                            "model" if message["role"] == "assistant"
+                            "model"
+                            if message["role"] == "assistant"
                             else "user"
                         ),
-                        "parts": [{"text": message["content"]}]
+                        "parts": [
+                            {"text": message["content"]}
+                        ]
                     })
 
                 try:
+
                     response_text = ask_dora(conversation)
+
                     st.markdown(response_text)
 
                 except Exception as error:
@@ -744,17 +764,17 @@ if prompt:
 
                     st.error(response_text)
 
+        # COPY BUTTON
+
         if response_text:
+
             render_copy_button(response_text)
+
+    # SAVE ASSISTANT MESSAGE IN THIS SESSION ONLY
 
     messages.append({
         "role": "assistant",
         "content": response_text
     })
-
-    save_chat_history(
-        st.session_state.chats,
-        st.session_state.active_chat
-    )
 
     st.rerun()
